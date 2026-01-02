@@ -44,6 +44,8 @@ Now that the stream is on. The drone will sends its video stream to the app from
 
 With the mistery of UDP Packets unraveled, now we can control the drone with our own program. I've made a simple python script to control the drone. You can get the script [here](src/teleop.py) and run it with `python teleop.py`. But first you have to be connected to the Drone's AP.
 
+For autonomous flights you can sketch a route with [src/draw-path.py](src/draw-path.py). Draw a path on the canvas and export it to stream the corresponding throttle/pitch/roll RC values to the drone (using the same `Drone` abstraction as `teleop.py`). The converter assumes the drone keeps facing north for the whole path, so segment deltas are translated directly into forward/sideways motion without issuing yaw commands.
+
 ## Physical Reverse Engineering
 
 Here is components of the drone that i've found after teardown.
