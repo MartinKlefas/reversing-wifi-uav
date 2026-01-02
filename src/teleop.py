@@ -1,127 +1,124 @@
-import time
 import threading
+import time
+from typing import Set
+
 from lib.drone import Drone
 from pynput import keyboard
-import os
+
+NEUTRAL_VALUE = 127
+SPEED_MULTIPLIER = 48
+MOVEMENT_KEYS = ["w", "s", "a", "d", "i", "m"]
+
+
+class TeleopSession:
+    """Keyboard-driven teleoperation for the drone."""
+
+    def __init__(self) -> None:
+        self.drone = Drone()
+        self._running = threading.Event()
+        self._running.set()
+
+        self._movement_pressed: Set[str] = set()
+        self._movement_vector = [0, 0, 0]  # x, y, z
+
+        self._initialize_drone()
+        self._drone_thread = threading.Thread(target=self._background, daemon=True)
+        self._drone_thread.start()
+
+    def _initialize_drone(self) -> None:
+        init_end = time.time() + 1
+        while time.time() < init_end:
+            self.drone.initialize_image()
+            time.sleep(0.1)
+
+    def _background(self) -> None:
+        while self._running.is_set():
+            self.drone.build_message()
+            self.drone.send_message()
+            time.sleep(0.1)
+
+    def _update_movement_vector(self) -> None:
+        self._movement_vector = [0, 0, 0]
+        if "w" in self._movement_pressed:
+            self._movement_vector[0] += 1
+        if "s" in self._movement_pressed:
+            self._movement_vector[0] -= 1
+        if "a" in self._movement_pressed:
+            self._movement_vector[1] -= 1
+        if "d" in self._movement_pressed:
+            self._movement_vector[1] += 1
+        if "i" in self._movement_pressed:
+            self._movement_vector[2] += 1
+        if "m" in self._movement_pressed:
+            self._movement_vector[2] -= 1
+
+    def _apply_movement(self) -> None:
+        pitch = NEUTRAL_VALUE + self._movement_vector[0] * SPEED_MULTIPLIER
+        roll = NEUTRAL_VALUE + self._movement_vector[1] * SPEED_MULTIPLIER
+        throttle = NEUTRAL_VALUE + self._movement_vector[2] * SPEED_MULTIPLIER
+
+        self.drone.set_pitch(pitch)
+        self.drone.set_roll(roll)
+        self.drone.set_throttle(throttle)
+
+    def on_press(self, key: keyboard.Key) -> None:
+        try:
+            if key.char in MOVEMENT_KEYS:
+                self._movement_pressed.add(key.char)
+                self._update_movement_vector()
+                self._apply_movement()
+
+            if key.char == "q":
+                self.drone.set_yaw(63)
+            elif key.char == "e":
+                self.drone.set_yaw(191)
+            elif key.char == "r":
+                self.drone.calibrate()
+            elif key.char == "f":
+                self.drone.takeoff()
+            elif key.char == "v":
+                self.drone.land()
+            elif key.char == "c":
+                self.drone.stop()
+            elif key.char == "j":
+                self.drone.reset_command()
+        except AttributeError:
+            # Special keys (e.g., arrows) are ignored
+            return
+
+    def on_release(self, key: keyboard.Key) -> bool | None:
+        if key == keyboard.Key.esc:
+            self._running.clear()
+            return False
+
+        try:
+            if key.char in MOVEMENT_KEYS and key.char in self._movement_pressed:
+                self._movement_pressed.remove(key.char)
+                self._update_movement_vector()
+                self._apply_movement()
+        except AttributeError:
+            return None
+
+        return None
+
+    def stop(self) -> None:
+        self._running.clear()
+        if self._drone_thread.is_alive():
+            self._drone_thread.join()
+        self.drone.stop()
+
 
 if __name__ == "__main__":
-    drone = Drone()
-
-    # send initialization for 1 second
-    init_end = time.time() + 1
-    while time.time() < init_end:
-        drone.initialize_image()
-        time.sleep(0.1)
-
-    def background():
-        global drone
-        while True:
-            drone.build_message()
-            drone.send_message()
-            time.sleep(0.1)
-        
-    drone_thread = threading.Thread(target=background)
-    drone_thread.start()
-
-    MOVEMENT_KEY_PRESSED = set()
-    MOVEMENT_KEYS = ['w', 's', 'a', 'd', 'i', 'm']
-    MOVEMENT_VECTOR = [0, 0, 0] # x, y, z, x = forward, y = left, z = up
-    PITCH = 127
-    ROLL = 127
-    THROTTLE = 127
-    SPEED_MULTIPLIER = 48
-    # 63 -> 127 -> 191
-
-    def on_press(key): 
-        try:
-            MOVEMENT_VECTOR = [0, 0, 0]
-            print('Key {0} pressed'.format(key.char))
-
-            if key.char in MOVEMENT_KEYS:
-                MOVEMENT_KEY_PRESSED.add(key.char)
-
-            if 'w' in MOVEMENT_KEY_PRESSED:
-                MOVEMENT_VECTOR[0] += 1
-
-            if 's' in MOVEMENT_KEY_PRESSED:
-                MOVEMENT_VECTOR[0] -= 1
-
-            if 'a' in MOVEMENT_KEY_PRESSED:
-                MOVEMENT_VECTOR[1] -= 1
-            
-            if 'd' in MOVEMENT_KEY_PRESSED:
-                MOVEMENT_VECTOR[1] += 1
-
-            if 'i' in MOVEMENT_KEY_PRESSED:
-                MOVEMENT_VECTOR[2] += 1
-            
-            if 'm' in MOVEMENT_KEY_PRESSED:
-                MOVEMENT_VECTOR[2] -= 1
-
-            PITCH = 127 + MOVEMENT_VECTOR[0] * SPEED_MULTIPLIER
-            ROLL = 127 + MOVEMENT_VECTOR[1] * SPEED_MULTIPLIER
-            THROTTLE = 127 + MOVEMENT_VECTOR[2] * SPEED_MULTIPLIER
-
-            print(PITCH, ROLL, THROTTLE)
-
-            drone.set_pitch(PITCH)
-            drone.set_roll(ROLL)
-            drone.set_throttle(THROTTLE)
-
-            if key.char == 'q':
-                drone.set_yaw(63)
-            elif key.char == 'e':
-                drone.set_yaw(191)
-            elif key.char == 'r':
-                drone.calibrate()
-            elif key.char == 'f':
-                drone.takeoff()
-            elif key.char == 'v':
-                drone.land()
-            elif key.char == 'c':
-                drone.stop()
-            elif key.char == 'j':
-                drone.reset_command()
-        except AttributeError:
-            print('Key {0} pressed'.format(key))
-
-    running = True
-
-    def on_release(key):
-        global running
-        try:
-            if key == keyboard.Key.esc:
-                print("ESC")
-                running = False
-                listener.stop()
-                return False
-            else:
-                if key.char in MOVEMENT_KEYS:
-                    MOVEMENT_KEY_PRESSED.remove(key.char)
-
-                PITCH = 127 + MOVEMENT_VECTOR[0] * SPEED_MULTIPLIER
-                ROLL = 127 + MOVEMENT_VECTOR[1] * SPEED_MULTIPLIER
-                THROTTLE = 127 + MOVEMENT_VECTOR[2] * SPEED_MULTIPLIER
-
-                print(PITCH, ROLL, THROTTLE)
-
-                drone.set_pitch(PITCH)
-                drone.set_roll(ROLL)
-                drone.set_throttle(THROTTLE)
-        except AttributeError:
-            print('Key {0} released'.format(key))
+    teleop = TeleopSession()
     try:
-        while running:
-            with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+        while teleop._running.is_set():
+            with keyboard.Listener(
+                on_press=teleop.on_press,
+                on_release=teleop.on_release,
+            ) as listener:
                 print("Ready To Teleop")
                 listener.join()
     except KeyboardInterrupt:
-        print('interrupted!')
-        drone.stop()
-        drone_thread.join() 
-        exit()
+        print("Interrupted!")
     finally:
-        drone.stop()
-        drone_thread.join()
-        exit()
-    
+        teleop.stop()
