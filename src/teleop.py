@@ -61,43 +61,51 @@ class TeleopSession:
         self.drone.set_roll(roll)
         self.drone.set_throttle(throttle)
 
-    def on_press(self, key: keyboard.Key) -> None:
-        try:
-            if key.char in MOVEMENT_KEYS:
-                self._movement_pressed.add(key.char)
-                self._update_movement_vector()
-                self._apply_movement()
+    def on_press(self, key: keyboard.Key | keyboard.KeyCode) -> bool | None:
+        key_char = getattr(key, "char", None)
 
-            if key.char == "q":
-                self.drone.set_yaw(63)
-            elif key.char == "e":
-                self.drone.set_yaw(191)
-            elif key.char == "r":
-                self.drone.calibrate()
-            elif key.char == "f":
-                self.drone.takeoff()
-            elif key.char == "v":
-                self.drone.land()
-            elif key.char == "c":
-                self.drone.stop()
-            elif key.char == "j":
-                self.drone.reset_command()
-        except AttributeError:
+        if key_char == "\x03":  # Ctrl+C
+            self._running.clear()
+            threading.interrupt_main()
+            return False
+
+        if key_char is None:
             # Special keys (e.g., arrows) are ignored
             return
 
-    def on_release(self, key: keyboard.Key) -> bool | None:
+        if key_char in MOVEMENT_KEYS:
+            self._movement_pressed.add(key_char)
+            self._update_movement_vector()
+            self._apply_movement()
+
+        if key_char == "q":
+            self.drone.set_yaw(63)
+        elif key_char == "e":
+            self.drone.set_yaw(191)
+        elif key_char == "r":
+            self.drone.calibrate()
+        elif key_char == "f":
+            self.drone.takeoff()
+        elif key_char == "v":
+            self.drone.land()
+        elif key_char == "c":
+            self.drone.stop()
+        elif key_char == "j":
+            self.drone.reset_command()
+
+    def on_release(self, key: keyboard.Key | keyboard.KeyCode) -> bool | None:
         if key == keyboard.Key.esc:
             self._running.clear()
             return False
 
-        try:
-            if key.char in MOVEMENT_KEYS and key.char in self._movement_pressed:
-                self._movement_pressed.remove(key.char)
-                self._update_movement_vector()
-                self._apply_movement()
-        except AttributeError:
+        key_char = getattr(key, "char", None)
+        if key_char is None:
             return None
+
+        if key_char in MOVEMENT_KEYS and key_char in self._movement_pressed:
+            self._movement_pressed.remove(key_char)
+            self._update_movement_vector()
+            self._apply_movement()
 
         return None
 
