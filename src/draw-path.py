@@ -1,14 +1,20 @@
+import math
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Tuple
 
-import tkinter as tk
+import pygame
 
 from lib.drone import Drone
 
 
 Point = Tuple[int, int]
+CANVAS_BG = (255, 255, 255)
+PATH_COLOR = (20, 90, 200)
+ERASE_PREVIEW = (230, 80, 80)
+INFO_BG = (40, 40, 40)
+INFO_TEXT = (230, 230, 230)
 
 
 @dataclass
@@ -109,41 +115,77 @@ class PathCommandSender:
         return commands
 
 
-class SimpleDraw(tk.Tk):
-    def __init__(self, sender: Optional[PathCommandSender] = None):
-        super().__init__()
-        self.title("Draw a path (LMB drag). Press Export.")
-        self.geometry("800x600")
-
-        self.canvas = tk.Canvas(self, bg="white")
-        self.canvas.pack(fill="both", expand=True)
-
-        btn = tk.Button(self, text="Export points", command=self.export)
-        btn.pack()
+class SimpleDraw:
+    def __init__(self, sender: Optional[PathCommandSender] = None, size: Tuple[int, int] = (960, 720)):
+        pygame.init()
+        self.screen = pygame.display.set_mode(size)
+        pygame.display.set_caption(
+            "Draw path with LMB. Space: send path. E: toggle eraser. C: clear."
+        )
+        self.canvas = pygame.Surface(size)
+        self.canvas.fill(CANVAS_BG)
+        self.font = pygame.font.Font(None, 24)
 
         self.points: List[Point] = []
         self._last: Optional[Point] = None
+        self._drawing = False
+        self._running = True
+        self.eraser_enabled = False
+        self.eraser_radius = 14
         self.sender = sender
 
-        self.canvas.bind("<ButtonPress-1>", self.on_down)
-        self.canvas.bind("<B1-Motion>", self.on_drag)
-        self.canvas.bind("<ButtonRelease-1>", self.on_up)
+        self.size = size
 
-    def on_down(self, event):
-        self._last = (event.x, event.y)
-        self.points.append(self._last)
+    def _render_text(self) -> None:
+        info_lines = [
+            "LMB drag to draw path",
+            "Space: send/fly | C: clear | E: toggle eraser | Esc/Close: quit",
+            f"Eraser: {'ON' if self.eraser_enabled else 'OFF'} (radius {self.eraser_radius}px)",
+            f"Points: {len(self.points)}",
+        ]
+        info_height = 70
+        info_rect = pygame.Rect(0, 0, self.size[0], info_height)
+        pygame.draw.rect(self.screen, INFO_BG, info_rect)
 
-    def on_drag(self, event):
-        cur = (event.x, event.y)
-        if self._last:
-            self.canvas.create_line(self._last[0], self._last[1], cur[0], cur[1], width=3)
-        self._last = cur
-        self.points.append(cur)
+        y = 8
+        for line in info_lines:
+            text_surf = self.font.render(line, True, INFO_TEXT)
+            self.screen.blit(text_surf, (10, y))
+            y += 18
 
-    def on_up(self, event):
+    def _redraw_canvas(self) -> None:
+        self.canvas.fill(CANVAS_BG)
+        if len(self.points) < 2:
+            return
+
+        last = self.points[0]
+        for point in self.points[1:]:
+            pygame.draw.line(self.canvas, PATH_COLOR, last, point, 3)
+            last = point
+
+    def _add_point(self, pos: Point) -> None:
+        if self._last is not None:
+            pygame.draw.line(self.canvas, PATH_COLOR, self._last, pos, 3)
+        self.points.append(pos)
+        self._last = pos
+
+    def _erase_at(self, pos: Point) -> None:
+        px, py = pos
+        before = len(self.points)
+        self.points = [p for p in self.points if math.hypot(p[0] - px, p[1] - py) > self.eraser_radius]
+        if len(self.points) != before:
+            self._last = None
+            self._redraw_canvas()
+
+    def _clear(self) -> None:
+        self.points.clear()
         self._last = None
+        self.canvas.fill(CANVAS_BG)
 
-    def export(self):
+    def _export(self) -> None:
+        if not self.points:
+            print("No points to export.")
+            return
         print(f"Exported {len(self.points)} points")
         print(self.points[:10], "...")
         if self.sender:
@@ -151,10 +193,64 @@ class SimpleDraw(tk.Tk):
             self.sender.follow_path(self.points)
             print("Done sending path. Drone should remain facing north for this flight.")
 
+    def _handle_mouse_down(self, event: pygame.event.Event) -> None:
+        if event.button == 1:
+            self._drawing = True
+            self._add_point(event.pos)
+
+    def _handle_mouse_up(self, event: pygame.event.Event) -> None:
+        if event.button == 1:
+            self._drawing = False
+            self._last = None
+
+    def _handle_mouse_motion(self, event: pygame.event.Event) -> None:
+        if not self._drawing:
+            return
+        if self.eraser_enabled:
+            self._erase_at(event.pos)
+        else:
+            self._add_point(event.pos)
+
+    def _draw_eraser_preview(self, mouse_pos: Point) -> None:
+        if not self.eraser_enabled:
+            return
+        pygame.draw.circle(self.screen, ERASE_PREVIEW, mouse_pos, self.eraser_radius, 2)
+
+    def run(self) -> None:
+        clock = pygame.time.Clock()
+        while self._running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self._running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        self._running = False
+                    elif event.key == pygame.K_SPACE:
+                        self._export()
+                    elif event.key == pygame.K_c:
+                        self._clear()
+                    elif event.key == pygame.K_e:
+                        self.eraser_enabled = not self.eraser_enabled
+                        self._last = None
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    self._handle_mouse_down(event)
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    self._handle_mouse_up(event)
+                elif event.type == pygame.MOUSEMOTION:
+                    self._handle_mouse_motion(event)
+
+            self.screen.blit(self.canvas, (0, 0))
+            self._render_text()
+            self._draw_eraser_preview(pygame.mouse.get_pos())
+            pygame.display.flip()
+            clock.tick(120)
+
+        pygame.quit()
+
 
 if __name__ == "__main__":
     sender = PathCommandSender()
     try:
-        SimpleDraw(sender=sender).mainloop()
+        SimpleDraw(sender=sender).run()
     finally:
         sender.stop()
