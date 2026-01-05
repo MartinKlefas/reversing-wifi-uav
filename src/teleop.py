@@ -1,3 +1,4 @@
+import _thread
 import threading
 import time
 from typing import Set
@@ -66,7 +67,7 @@ class TeleopSession:
 
         if key_char == "\x03":  # Ctrl+C
             self._running.clear()
-            threading.interrupt_main()
+            _thread.interrupt_main()
             return False
 
         if key_char is None:
@@ -121,8 +122,8 @@ if __name__ == "__main__":
     try:
         while teleop._running.is_set():
             with keyboard.Listener(
-                on_press=teleop.on_press,
-                on_release=teleop.on_release,
+                on_press=teleop.on_press, # type: ignore
+                on_release=teleop.on_release, # type: ignore
             ) as listener:
                 print("Ready To Teleop")
                 listener.join()
